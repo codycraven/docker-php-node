@@ -1,8 +1,6 @@
 #!/bin/bash
 set -o pipefail -e
 
-# PUBLISHED_VERSIONS=$( echo '[{"name": "php-7.1.4--node-7.9.0"}, {"name": "php-7.0.3--node-7.9.1"}, {"name": "php-7.1.3--node-7.9.1"}, {"name": "php-7.1.4--node-7.9.0--volume"}]' \
-#   | jq -r '.[] | .name' )
 NAMESPACE="${NAMESPACE:-codycraven}"
 
 VERSION_REGEX="^([0-9]*)\.([0-9]*)(\.([0-9]+((-|.)[^ ]*)?))$"
