@@ -1,5 +1,5 @@
 FROM %%NAMESPACE%%/php-node:%%BUILD_TAG%%
 
 VOLUME %%YARN_VOLUME_PATH%%
-RUN apk-add --no-cache git
+RUN apk add --no-cache git
 

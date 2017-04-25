@@ -73,8 +73,8 @@ docker build -t "${NAMESPACE}/php-node:${BUILD_TAG}--volume" builds/volume
 # Git image
 cp Dockerfile-git.template builds/git/Dockerfile
 # Set values
-sed -E -i "s/%%NAMESPACE%%/$NAMESPACE/" builds/volume-git/Dockerfile
-sed -E -i "s/%%BUILD_TAG%%/$BUILD_TAG/" builds/volume-git/Dockerfile
+sed -E -i "s/%%NAMESPACE%%/$NAMESPACE/" builds/git/Dockerfile
+sed -E -i "s/%%BUILD_TAG%%/$BUILD_TAG/" builds/git/Dockerfile
 # Build
 docker build -t "${NAMESPACE}/php-node:${BUILD_TAG}--git" builds/git
 
