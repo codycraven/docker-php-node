@@ -151,7 +151,6 @@ if [ "$( echo -e "$LATEST_MAJOR\n$BUILD_TAG" | sort | tail -1 )" = "$BUILD_TAG" 
   cp builds/git/Dockerfile latest/git/Dockerfile
   cp builds/volume-git/Dockerfile latest/volume-git/Dockerfile
 fi
-exit
 
 # Update Docker Hub README.md
 cp Docker-hub-README.md latest/volatile/
