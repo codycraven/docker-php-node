@@ -41,7 +41,7 @@ PUBLISHED_VERSIONS=$( curl -s -S "https://registry.hub.docker.com/v1/repositorie
 
 # Ensure fresh builds
 rm -fr builds
-mkdir -p builds/volatile builds/volume
+mkdir -p builds/volatile builds/volume builds/git builds/volume-git
 
 # Volatile image
 cp Dockerfile-volatile.template builds/volatile/Dockerfile
@@ -53,9 +53,9 @@ curl -s -S "https://raw.githubusercontent.com/nodejs/docker-node/master/Dockerfi
   | tail -n +2 \
   | cat >> builds/volatile/Dockerfile
 # Set PHP/Node/Yarn versions
-sed -E -i '' 's/^(FROM php:)0.0.0/\1'"$PHP_VERSION"'/' builds/volatile/Dockerfile
-sed -E -i '' 's/^(ENV NODE_VERSION ).*/\1'"$NODE_VERSION"'/' builds/volatile/Dockerfile
-sed -E -i '' 's/^(ENV YARN_VERSION ).*/\1'"$YARN_VERSION"'/' builds/volatile/Dockerfile
+sed -E -i 's/^(FROM php:)0.0.0/\1'"$PHP_VERSION"'/' builds/volatile/Dockerfile
+sed -E -i 's/^(ENV NODE_VERSION ).*/\1'"$NODE_VERSION"'/' builds/volatile/Dockerfile
+sed -E -i 's/^(ENV YARN_VERSION ).*/\1'"$YARN_VERSION"'/' builds/volatile/Dockerfile
 # Build
 docker build -t "${NAMESPACE}/php-node:${BUILD_TAG}" builds/volatile
 
@@ -64,11 +64,28 @@ cp Dockerfile-volume.template builds/volume/Dockerfile
 # Define volume paths
 YARN_VOLUME_PATH=$( docker run --rm "$NAMESPACE/php-node:$BUILD_TAG" yarn cache dir )
 # Set values
-sed -E -i '' "s/%%NAMESPACE%%/$NAMESPACE/" builds/volume/Dockerfile
-sed -E -i '' "s/%%BUILD_TAG%%/$BUILD_TAG/" builds/volume/Dockerfile
-sed -E -i '' "s#%%YARN_VOLUME_PATH%%#$YARN_VOLUME_PATH#" builds/volume/Dockerfile
+sed -E -i "s/%%NAMESPACE%%/$NAMESPACE/" builds/volume/Dockerfile
+sed -E -i "s/%%BUILD_TAG%%/$BUILD_TAG/" builds/volume/Dockerfile
+sed -E -i "s#%%YARN_VOLUME_PATH%%#$YARN_VOLUME_PATH#" builds/volume/Dockerfile
 # Build
 docker build -t "${NAMESPACE}/php-node:${BUILD_TAG}--volume" builds/volume
+
+# Git image
+cp Dockerfile-git.template builds/git/Dockerfile
+# Set values
+sed -E -i "s/%%NAMESPACE%%/$NAMESPACE/" builds/volume-git/Dockerfile
+sed -E -i "s/%%BUILD_TAG%%/$BUILD_TAG/" builds/volume-git/Dockerfile
+# Build
+docker build -t "${NAMESPACE}/php-node:${BUILD_TAG}--git" builds/git
+
+# Volume-git image
+cp Dockerfile-volume-git.template builds/volume-git/Dockerfile
+# Set values
+sed -E -i "s/%%NAMESPACE%%/$NAMESPACE/" builds/volume-git/Dockerfile
+sed -E -i "s/%%BUILD_TAG%%/$BUILD_TAG/" builds/volume-git/Dockerfile
+sed -E -i "s#%%YARN_VOLUME_PATH%%#$YARN_VOLUME_PATH#" builds/volume-git/Dockerfile
+# Build
+docker build -t "${NAMESPACE}/php-node:${BUILD_TAG}--volume-git" builds/volume-git
 
 # If latest patch in major/minor, tag as latest minor under that major
 LATEST_PATCH=$( echo "$PUBLISHED_VERSIONS" \
@@ -82,6 +99,12 @@ if [ "$( echo -e "$LATEST_PATCH\n$BUILD_TAG" | sort | tail -1 )" = "$BUILD_TAG" 
   docker tag \
     ${NAMESPACE}/php-node:${BUILD_TAG}--volume \
     ${NAMESPACE}/php-node:php-${PHP_MAJOR}.${PHP_MINOR}--node-${NODE_MAJOR}.${NODE_MINOR}--volume
+  docker tag \
+    ${NAMESPACE}/php-node:${BUILD_TAG}--git \
+    ${NAMESPACE}/php-node:php-${PHP_MAJOR}.${PHP_MINOR}--node-${NODE_MAJOR}.${NODE_MINOR}--git
+  docker tag \
+    ${NAMESPACE}/php-node:${BUILD_TAG}--volume-git \
+    ${NAMESPACE}/php-node:php-${PHP_MAJOR}.${PHP_MINOR}--node-${NODE_MAJOR}.${NODE_MINOR}--volume-git
 fi
 
 # If latest minor/patch in major, tag as latest major
@@ -96,6 +119,12 @@ if [ "$( echo -e "$LATEST_MINOR\n$BUILD_TAG" | sort | tail -1 )" = "$BUILD_TAG" 
   docker tag \
     ${NAMESPACE}/php-node:${BUILD_TAG}--volume \
     ${NAMESPACE}/php-node:php-${PHP_MAJOR}--node-${NODE_MAJOR}--volume
+  docker tag \
+    ${NAMESPACE}/php-node:${BUILD_TAG}--git \
+    ${NAMESPACE}/php-node:php-${PHP_MAJOR}--node-${NODE_MAJOR}--git
+  docker tag \
+    ${NAMESPACE}/php-node:${BUILD_TAG}--volume-git \
+    ${NAMESPACE}/php-node:php-${PHP_MAJOR}--node-${NODE_MAJOR}--volume-git
 fi
 
 # If latest major/minor/patch, tag as latest and copy Dockerfiles to latest/ for
@@ -111,12 +140,21 @@ if [ "$( echo -e "$LATEST_MAJOR\n$BUILD_TAG" | sort | tail -1 )" = "$BUILD_TAG" 
   docker tag \
     ${NAMESPACE}/php-node:${BUILD_TAG}--volume \
     ${NAMESPACE}/php-node:latest--volume
+  docker tag \
+    ${NAMESPACE}/php-node:${BUILD_TAG}--git \
+    ${NAMESPACE}/php-node:latest--git
+  docker tag \
+    ${NAMESPACE}/php-node:${BUILD_TAG}--volume-git \
+    ${NAMESPACE}/php-node:latest--volume-git
   cp builds/volatile/Dockerfile latest/volatile/Dockerfile
   cp builds/volume/Dockerfile latest/volume/Dockerfile
+  cp builds/git/Dockerfile latest/git/Dockerfile
+  cp builds/volume-git/Dockerfile latest/volume-git/Dockerfile
 fi
 exit
 
 # Update Docker Hub README.md
+cp Docker-hub-README.md latest/volatile/
 
 # Clean up
 rm -fr builds
