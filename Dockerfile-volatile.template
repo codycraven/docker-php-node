@@ -1,3 +1,0 @@
-FROM php:0.0.0-alpine
-
-# Below is the Alpine Dockerfile from https://hub.docker.com/_/node/ with populated versions

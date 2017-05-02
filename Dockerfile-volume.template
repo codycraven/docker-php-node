@@ -1,3 +1,0 @@
-FROM %%NAMESPACE%%/php-node:%%BUILD_TAG%%
-
-VOLUME %%YARN_VOLUME_PATH%%

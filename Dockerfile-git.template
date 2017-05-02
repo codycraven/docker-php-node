@@ -1,3 +1,0 @@
-FROM %%NAMESPACE%%/php-node:%%BUILD_TAG%%
-
-RUN apk add --no-cache git
