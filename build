@@ -1,14 +1,20 @@
 #!/bin/bash
 set -o pipefail -e
 
+replace () {
+  if [ "$( uname -s )" = "Darwin" ]; then
+    sed -E -i '' "$1" "$2"
+  else
+    sed -E -i "$1" "$2"
+  fi
+}
+
 NAMESPACE="${NAMESPACE:-codycraven}"
+LATEST="${LATEST:-0}"
 
 VERSION_REGEX="^([0-9]*)\.([0-9]*)(\.([0-9]+((-|.)[^ ]*)?))$"
 if [[ "$1" =~ $VERSION_REGEX ]]; then
   PHP_VERSION="$1"
-  PHP_MAJOR="${BASH_REMATCH[1]}"
-  PHP_MINOR="${BASH_REMATCH[2]}"
-  PHP_PATCH="${BASH_REMATCH[4]}"
 else
   >&2 echo -e "\033[1mFailed to build:\033[0m Invalid PHP version supplied\n\n" \
     "Example: ./build \033[1m7.1.4\033[0m 7.9.0\n"
@@ -25,135 +31,68 @@ fi
 
 if [[ "$2" =~ $VERSION_REGEX ]]; then
   NODE_VERSION="$2"
-  NODE_MAJOR="${BASH_REMATCH[1]}"
-  NODE_MINOR="${BASH_REMATCH[2]}"
-  NODE_PATCH="${BASH_REMATCH[4]}"
 else
   >&2 echo -e "\033[1mFailed to build:\033[0m Invalid Node version supplied\n\n" \
     "Example: ./build 7.1.4 \033[1m7.9.0\033[0m\n"
   exit 1
 fi
 
-# Get published Docker Hub versions
-# Note, use v1 API to get list of all tags, v2 paginates...
-PUBLISHED_VERSIONS=$( curl -s -S "https://registry.hub.docker.com/v1/repositories/${NAMESPACE}/php-node/tags" \
-  | jq -r '.[] | .name' )
-
 # Ensure fresh builds
 rm -fr builds
-mkdir -p builds/volatile builds/volume builds/git builds/volume-git
+mkdir -p builds/builder builds/main
 
-# Volatile image
-cp Dockerfile-volatile.template builds/volatile/Dockerfile
+# Main image
+echo -e "FROM php:$PHP_VERSION-alpine" > builds/main/Dockerfile
 # Define versions
 YARN_VERSION="$( curl -sSL https://yarnpkg.com/latest-version )"
-BUILD_TAG="php-${PHP_VERSION}--node-${NODE_VERSION}"
-# Apply Node's Alpine template.
+BUILD_TAG="php-$PHP_VERSION--node-$NODE_VERSION"
+# Install Composer
+echo -e "\n" >> builds/main/Dockerfile
+cat << COMPOSER >> builds/main/Dockerfile
+# Composer install
+RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \\
+    php -r "if (hash_file('SHA384', 'composer-setup.php') === '669656bab3166a7aff8a7506b8cb2d1c292f042046c5a994c43155c0be6190fa0355160742ab2e1c88d40d5be660b410') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); } echo PHP_EOL;" \\
+    php composer-setup.php --filename=composer --install-dir=/usr/local/bin \\
+    php -r "unlink('composer-setup.php');"
+COMPOSER
+# Install Node based on nodejs/docker-node's alpine template.
+echo -e "\n\n# Node $NODE_VERSION install" >> builds/main/Dockerfile
 curl -s -S "https://raw.githubusercontent.com/nodejs/docker-node/master/Dockerfile-alpine.template" \
-  | tail -n +2 \
-  | cat >> builds/volatile/Dockerfile
+  | tail -n +3 \
+  | cat >> builds/main/Dockerfile
 # Set PHP/Node/Yarn versions
-sed -E -i 's/^(FROM php:)0.0.0/\1'"$PHP_VERSION"'/' builds/volatile/Dockerfile
-sed -E -i 's/^(ENV NODE_VERSION ).*/\1'"$NODE_VERSION"'/' builds/volatile/Dockerfile
-sed -E -i 's/^(ENV YARN_VERSION ).*/\1'"$YARN_VERSION"'/' builds/volatile/Dockerfile
+replace 's/^(ENV NODE_VERSION ).*/\1'"$NODE_VERSION"'/' builds/main/Dockerfile
+replace 's/^(ENV YARN_VERSION ).*/\1'"$YARN_VERSION"'/' builds/main/Dockerfile
 # Build
-docker build -t "${NAMESPACE}/php-node:${BUILD_TAG}" builds/volatile
+docker build -t "$NAMESPACE/php-node:$BUILD_TAG" builds/main
 
-# Volume image
-cp Dockerfile-volume.template builds/volume/Dockerfile
-# Define volume paths
-YARN_VOLUME_PATH=$( docker run --rm "$NAMESPACE/php-node:$BUILD_TAG" yarn cache dir )
-# Set values
-sed -E -i "s/%%NAMESPACE%%/$NAMESPACE/" builds/volume/Dockerfile
-sed -E -i "s/%%BUILD_TAG%%/$BUILD_TAG/" builds/volume/Dockerfile
-sed -E -i "s#%%YARN_VOLUME_PATH%%#$YARN_VOLUME_PATH#" builds/volume/Dockerfile
+# Builder image
+echo -e "FROM $NAMESPACE/php-node:$BUILD_TAG\n" > builds/builder/Dockerfile
+cat << DEPS >> builds/builder/Dockerfile
+# Common build dependencies
+RUN apk add --no-cache \\
+    build-base \\
+    git \\
+    python
+DEPS
 # Build
-docker build -t "${NAMESPACE}/php-node:${BUILD_TAG}--volume" builds/volume
+docker build -t "$NAMESPACE/php-node:$BUILD_TAG--builder" builds/builder
 
-# Git image
-cp Dockerfile-git.template builds/git/Dockerfile
-# Set values
-sed -E -i "s/%%NAMESPACE%%/$NAMESPACE/" builds/git/Dockerfile
-sed -E -i "s/%%BUILD_TAG%%/$BUILD_TAG/" builds/git/Dockerfile
-# Build
-docker build -t "${NAMESPACE}/php-node:${BUILD_TAG}--git" builds/git
-
-# Volume-git image
-cp Dockerfile-volume-git.template builds/volume-git/Dockerfile
-# Set values
-sed -E -i "s/%%NAMESPACE%%/$NAMESPACE/" builds/volume-git/Dockerfile
-sed -E -i "s/%%BUILD_TAG%%/$BUILD_TAG/" builds/volume-git/Dockerfile
-sed -E -i "s#%%YARN_VOLUME_PATH%%#$YARN_VOLUME_PATH#" builds/volume-git/Dockerfile
-# Build
-docker build -t "${NAMESPACE}/php-node:${BUILD_TAG}--volume-git" builds/volume-git
-
-# If latest patch in major/minor, tag as latest minor under that major
-LATEST_PATCH=$( echo "$PUBLISHED_VERSIONS" \
-  | grep -E '^php-'"$PHP_MAJOR"'\.'"$PHP_MINOR"'\.\d+--node-'"$NODE_MAJOR"'\.'"$NODE_MINOR"'\.\d+$' \
-  | sort \
-  | tail -1 )
-if [ "$( echo -e "$LATEST_PATCH\n$BUILD_TAG" | sort | tail -1 )" = "$BUILD_TAG" ]; then
-  docker tag \
-    ${NAMESPACE}/php-node:${BUILD_TAG} \
-    ${NAMESPACE}/php-node:php-${PHP_MAJOR}.${PHP_MINOR}--node-${NODE_MAJOR}.${NODE_MINOR}
-  docker tag \
-    ${NAMESPACE}/php-node:${BUILD_TAG}--volume \
-    ${NAMESPACE}/php-node:php-${PHP_MAJOR}.${PHP_MINOR}--node-${NODE_MAJOR}.${NODE_MINOR}--volume
-  docker tag \
-    ${NAMESPACE}/php-node:${BUILD_TAG}--git \
-    ${NAMESPACE}/php-node:php-${PHP_MAJOR}.${PHP_MINOR}--node-${NODE_MAJOR}.${NODE_MINOR}--git
-  docker tag \
-    ${NAMESPACE}/php-node:${BUILD_TAG}--volume-git \
-    ${NAMESPACE}/php-node:php-${PHP_MAJOR}.${PHP_MINOR}--node-${NODE_MAJOR}.${NODE_MINOR}--volume-git
-fi
-
-# If latest minor/patch in major, tag as latest major
-LATEST_MINOR=$( echo "$PUBLISHED_VERSIONS" \
-  | grep -E '^php-'"$PHP_MAJOR"'\.\d+\.\d+--node-'"$NODE_MAJOR"'\.\d+\.\d+$' \
-  | sort \
-  | tail -1 )
-if [ "$( echo -e "$LATEST_MINOR\n$BUILD_TAG" | sort | tail -1 )" = "$BUILD_TAG" ]; then
-  docker tag \
-    ${NAMESPACE}/php-node:${BUILD_TAG} \
-    ${NAMESPACE}/php-node:php-${PHP_MAJOR}--node-${NODE_MAJOR}
-  docker tag \
-    ${NAMESPACE}/php-node:${BUILD_TAG}--volume \
-    ${NAMESPACE}/php-node:php-${PHP_MAJOR}--node-${NODE_MAJOR}--volume
-  docker tag \
-    ${NAMESPACE}/php-node:${BUILD_TAG}--git \
-    ${NAMESPACE}/php-node:php-${PHP_MAJOR}--node-${NODE_MAJOR}--git
-  docker tag \
-    ${NAMESPACE}/php-node:${BUILD_TAG}--volume-git \
-    ${NAMESPACE}/php-node:php-${PHP_MAJOR}--node-${NODE_MAJOR}--volume-git
-fi
-
-# If latest major/minor/patch, tag as latest and copy Dockerfiles to latest/ for
-# commit
-LATEST_MAJOR=$( echo "$PUBLISHED_VERSIONS" \
-  | grep -E '^php-\d+\.\d+\.\d+--node-\d+\.\d+\.\d+$' \
-  | sort \
-  | tail -1 )
-if [ "$( echo -e "$LATEST_MAJOR\n$BUILD_TAG" | sort | tail -1 )" = "$BUILD_TAG" ]; then
+# If latest specified, then tag and copy Dockerfiles.
+if [ $LATEST -eq 1 ]; then
   docker tag \
     ${NAMESPACE}/php-node:${BUILD_TAG} \
     ${NAMESPACE}/php-node:latest
   docker tag \
-    ${NAMESPACE}/php-node:${BUILD_TAG}--volume \
-    ${NAMESPACE}/php-node:latest--volume
-  docker tag \
-    ${NAMESPACE}/php-node:${BUILD_TAG}--git \
-    ${NAMESPACE}/php-node:latest--git
-  docker tag \
-    ${NAMESPACE}/php-node:${BUILD_TAG}--volume-git \
-    ${NAMESPACE}/php-node:latest--volume-git
-  cp builds/volatile/Dockerfile latest/volatile/Dockerfile
-  cp builds/volume/Dockerfile latest/volume/Dockerfile
-  cp builds/git/Dockerfile latest/git/Dockerfile
-  cp builds/volume-git/Dockerfile latest/volume-git/Dockerfile
+    ${NAMESPACE}/php-node:${BUILD_TAG}--builder \
+    ${NAMESPACE}/php-node:latest--builder
+  cp builds/main/Dockerfile main/Dockerfile
+  cp builds/builder/Dockerfile builder/Dockerfile
+  echo "Tagged latest and updated builds/*, please add/commit and push"
 fi
 
 # Update Docker Hub README.md
-cp Docker-hub-README.md latest/volatile/
+cp Docker-hub-README.md main/
 
 # Clean up
 rm -fr builds
