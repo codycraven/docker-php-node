@@ -92,7 +92,7 @@ if [ $LATEST -eq 1 ]; then
 fi
 
 # Update Docker Hub README.md
-cp Docker-hub-README.md main/
+cp Docker-hub-README.md main/README.md
 
 # Clean up
 rm -fr builds
